@@ -57,6 +57,18 @@
 - Electron
 - python
 
+## 总体需求
+
+实现 Kerberos 加密认证体系
+
+实现 C 和 V 之间全过程加密通信
+
+使用 RSA 数字签名实现双向不可否认
+
+实现多线程并发处理
+
+在已实现的 Kerberos 基础上，基于 Xterm.js 和 Go PTY 实现零信任访问审计系统：Kerberos 提供身份验证和加密通信保证，RSA 签名实现双向不可否认，V 服务器对 Client 的每一条 Command 后台记录并存入数据库
+
 # 第一章　全局统一规范
 
 ## 设计原则与强制约束
@@ -1303,12 +1315,6 @@ client WEB API 监听 9883 端口：
 > `/api/exec` 调用时 payload 进行 **本地 base64 编码**，Client 核心代理拿到 `payload` 在 **本地 base64 解码**，解码后依照第九章报文格式封包
 
 ## UI 设计
-
-**封包展示**：对收发的每一个包，应该将完整封包转成 Hex 并通过 `/api/logs` 发回 client 前端展示，UI 设计参考 `wireshark`：
-
-![5fd4fcf2032ee8374b85d43df66b7c04](https://cdn.jsdelivr.net/gh/fsj2009yx/picserver@main/20260420163519316.png)
-
-
 
 UI 分多个页面，分别是登录页面，终端页面，日志页面：
 
