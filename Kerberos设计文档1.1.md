@@ -1306,7 +1306,7 @@ client WEB API 监听 9883 端口：
 | `POST /api/login` | POST | 触发 AS → TGS → AP 三阶段认证 | 请求：`{username,password}` 返回：`{state, tgt_expire, tv_expire}` |
 | `GET /api/state` | GET | 当前 Client 状态 | `{state, k_ctgs_sha256, k_cv_sha256, tgt_expire, tv_expire}` |
 | `GET /api/cert` | GET | 本 Client 证书 | `{id,issuer, public_key:{n,e}, expire, sign}` |
-| `SSE /api/logs` | SSE | 通信封包记录(实时回传 WEBUI) | `{logs: [{ts, type, packet_hex}]}` |
+| `SSE /api/logs` | SSE | 通信封包记录(实时回传 WEBUI) | `{logs: [{packet_ascii,decode_packet_ascii}]}` |
 | `Post /api/exec` | Post | 发送 Command CLI 命令或二进制数据 | `{ "type": 0x01/0x02, "data": payload }` |
 
 > 注意，Client 网络核心代理在通过 WEB API 拿到 json 数据解析后再进行网络封包
@@ -1325,142 +1325,18 @@ UI 分多个页面，分别是登录页面，终端页面，日志页面：
 
 - **日志页面：** 通过 SSE 实时展示 Client 收发的网络封包
 
-  - **封包展示**：Client 对收发的每一个包，应该将完整封包转成 ASCII 编码并通过 `/api/logs` 发回 client 前端展示，UI 设计参考 `wireshark`：
-  - **明文密文对比**：左边部分不使用 Hex 字符串，而是使用明文 ASCII，右边使用密文 ASCII，做明文密文对比
+  - **封包展示**：Client 对收发的每一个包，应该将 **完整 Packet 直接转 ASCII 字符串** 后通过 `/api/logs` 发回 client 前端，界面风格参考 `wireshark` 的“包列表 + 详情面板”。
+  - **未解包/解包对照**：左边展示 **Raw Packet** 右边展示 **Decoded Packet**：
+    - **Raw Packet：**
+      展示未解密封包的 ASCII byte dump。
+    - **Decoded Packet：**
+      展示解密后的报文布局，基于 struct 的原始二进制流进行 ASCII 编码
+      能够体现物理布局，但不进行 JSON / Key-Value 结构化展示
   
-  以下为可直接复用的无依赖 HTML 参考稿（仅 `HTML + CSS`）：
-
-```html
-<section class="packet-compare">
-  <header class="packet-head">
-    <h3>APP_REQ Packet Inspector</h3>
-    <div class="meta">
-      <span>Seq: 148</span>
-      <span>MsgType: 0x07</span>
-      <span>IV: V3f9P2kL</span>
-      <span>CipherLen: 64</span>
-    </div>
-  </header>
-
-  <div class="packet-grid">
-    <article class="pane plain">
-      <h4>Plain ASCII</h4>
-      <pre>type=0x01
-payload_len=27
-payload=cat /var/log/auth.log</pre>
-    </article>
-
-    <article class="pane cipher">
-      <h4>Cipher ASCII</h4>
-      <pre>QmF4fW8rY2QhQz0+ZSt7NEU9Xyl1
-fXQqQCMjWm8rL1B6OkFfM1p8Mg==</pre>
-    </article>
-  </div>
-</section>
-
-<style>
-  .packet-compare {
-    --bg: #f6f7f9;
-    --ink: #12212f;
-    --muted: #5a6a79;
-    --line: #d8dee4;
-    --left: #ffffff;
-    --right: #eef6ff;
-    --accent: #0f6db8;
-    margin: 12px 0 18px;
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    background: linear-gradient(180deg, #fbfcfd 0%, var(--bg) 100%);
-    overflow: hidden;
-    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  }
-
-  .packet-head {
-    padding: 12px 14px 10px;
-    border-bottom: 1px solid var(--line);
-    background: #fff;
-  }
-
-  .packet-head h3 {
-    margin: 0 0 8px;
-    font-size: 15px;
-    color: var(--ink);
-  }
-
-  .meta {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  .meta span {
-    font-size: 12px;
-    color: var(--muted);
-    padding: 2px 8px;
-    border-radius: 999px;
-    border: 1px solid var(--line);
-    background: #fff;
-  }
-
-  .packet-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-    padding: 12px;
-  }
-
-  .pane {
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    overflow: hidden;
-  }
-
-  .pane h4 {
-    margin: 0;
-    padding: 8px 10px;
-    font-size: 12px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: #20435f;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .plain {
-    background: var(--left);
-  }
-
-  .plain h4 {
-    background: #f9fbff;
-  }
-
-  .cipher {
-    background: var(--right);
-  }
-
-  .cipher h4 {
-    background: #e8f2ff;
-    color: var(--accent);
-  }
-
-  .pane pre {
-    margin: 0;
-    padding: 10px;
-    min-height: 86px;
-    white-space: pre-wrap;
-    word-break: break-all;
-    font-size: 12px;
-    line-height: 1.45;
-    font-family: "JetBrains Mono", "Consolas", monospace;
-    color: #102736;
-  }
-
-  @media (max-width: 720px) {
-    .packet-grid {
-      grid-template-columns: 1fr;
-    }
-  }
-</style>
-```
+  
+  UI 风格参考 wireshark，tcpdump 等抓包软件：
+  
+  ![d7236276d778a80bd29ecb330102a261](https://cdn.jsdelivr.net/gh/fsj2009yx/picserver@main/20260421113559853.png)
 
 # 第七章　封包与拆包详细设计
 
