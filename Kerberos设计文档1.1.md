@@ -1313,7 +1313,7 @@ client WEB API 监听 9883 端口：
 >
 > `/api/login` 拿到的 password 必须是 **8 字节** 以适配 DES 加密要求
 >
-> `/api/exec` 调用时 payload 进行 **本地 base64 编码**，Client 核心代理拿到 `payload` 在 **本地 base64 解码**，解码后依照第九章报文格式封包
+> `/api/exec` 调用时 payload 进行 **本地 base64 编码**，Client 核心代理拿到 `payload` 在 **本地 base64 解码**，解码后依照第九章 APP_REQ/APP_REP 报文格式封包
 
 ## UI 设计
 
