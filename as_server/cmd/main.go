@@ -4,7 +4,7 @@ import (
 	"flag"
 	"log"
 
-	"security-project/verify_server/service"
+	"security-project/as_server/service"
 )
 
 func main() {
