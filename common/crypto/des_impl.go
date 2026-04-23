@@ -1,4 +1,4 @@
-package krb
+package crypto
 
 import (
 	"crypto/rand"

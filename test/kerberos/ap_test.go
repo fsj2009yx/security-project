@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"testing"
 
+	cryptoutil "security-project/common/crypto"
 	"security-project/common/krb"
 )
 
@@ -18,11 +19,11 @@ func TestKerberosAPMessages(t *testing.T) {
 	ts5 := uint32(1700000205)
 	lifetime := uint32(1200)
 
-	ticketVPlain, code := krb.BuildTicketVPlain(client, adc, idV, keyCV, ts4, lifetime)
-	if code != krb.KRBOK {
-		t.Fatalf("BuildTicketVPlain failed: %d", code)
+	ticketVPlain, err := krb.BuildTicketVPlain(client, adc, idV, keyCV, ts4, lifetime)
+	if err != nil {
+		t.Fatalf("BuildTicketVPlain failed: %v", err)
 	}
-	ticketVCipher, err := krb.EncryptDESCBC(kv, ticketVPlain)
+	ticketVCipher, err := cryptoutil.EncryptDESCBC(kv, ticketVPlain)
 	if err != nil {
 		t.Fatalf("EncryptDESCBC(ticket_v) failed: %v", err)
 	}
@@ -31,21 +32,21 @@ func TestKerberosAPMessages(t *testing.T) {
 		t.Fatalf("buildAuthenticatorCVCipher failed: %v", err)
 	}
 	reqRaw := buildAPReqPayload(ticketVCipher, authCipher)
-	req, code := krb.ParseAPReqPayload(reqRaw)
-	if code != krb.KRBOK {
-		t.Fatalf("ParseAPReqPayload failed: %d", code)
+	req, err := krb.ParseAPReqPayload(reqRaw)
+	if err != nil {
+		t.Fatalf("ParseAPReqPayload failed: %v", err)
 	}
 	if !bytes.Equal(req.TicketV, ticketVCipher) || !bytes.Equal(req.AuthCipher, authCipher) {
 		t.Fatalf("AP_REQ mismatch")
 	}
 
-	ticketDecoded, code := krb.DecodeTicketV(req.TicketV, kv)
-	if code != krb.KRBOK {
-		t.Fatalf("DecodeTicketV failed: %d", code)
+	ticketDecoded, err := krb.DecodeTicketV(req.TicketV, kv)
+	if err != nil {
+		t.Fatalf("DecodeTicketV failed: %v", err)
 	}
-	authDecoded, code := krb.DecodeAuthenticatorCV(req.AuthCipher, ticketDecoded.KeyCV)
-	if code != krb.KRBOK {
-		t.Fatalf("DecodeAuthenticatorCV failed: %d", code)
+	authDecoded, err := krb.DecodeAuthenticatorCV(req.AuthCipher, ticketDecoded.KeyCV)
+	if err != nil {
+		t.Fatalf("DecodeAuthenticatorCV failed: %v", err)
 	}
 	if string(ticketDecoded.IDClient.Data) != client || ticketDecoded.ADc != adc || string(ticketDecoded.IDV.Data) != idV || ticketDecoded.TS4 != ts4 || ticketDecoded.Lifetime != lifetime {
 		t.Fatalf("ticket_v mismatch")
@@ -54,17 +55,17 @@ func TestKerberosAPMessages(t *testing.T) {
 		t.Fatalf("authenticator_cv mismatch")
 	}
 
-	wire, code := krb.BuildAPRepPayload(ts5, keyCV)
-	if code != krb.KRBOK {
-		t.Fatalf("BuildAPRepPayload failed: %d", code)
+	wire, err := krb.BuildAPRepPayload(ts5, keyCV)
+	if err != nil {
+		t.Fatalf("BuildAPRepPayload failed: %v", err)
 	}
-	outer, code := krb.ParseASRepPayload(wire)
-	if code != krb.KRBOK {
-		t.Fatalf("ParseASRepPayload failed: %d", code)
+	outer, err := krb.ParseASRepPayload(wire)
+	if err != nil {
+		t.Fatalf("ParseASRepPayload failed: %v", err)
 	}
-	plain, code := krb.DecryptAPRepPlain(outer.EncPart, keyCV)
-	if code != krb.KRBOK {
-		t.Fatalf("DecryptAPRepPlain failed: %d", code)
+	plain, err := krb.DecryptAPRepPlain(outer.EncPart, keyCV)
+	if err != nil {
+		t.Fatalf("DecryptAPRepPlain failed: %v", err)
 	}
 	if plain.TS5Plus1 != ts5+1 {
 		t.Fatalf("AP_REP mismatch: got %d want %d", plain.TS5Plus1, ts5+1)
@@ -91,5 +92,5 @@ func buildAuthenticatorCVCipher(key [8]byte, client string, adc, ts5 uint32) ([]
 	raw.Write(tmp4[:])
 	binary.BigEndian.PutUint32(tmp4[:], ts5)
 	raw.Write(tmp4[:])
-	return krb.EncryptDESCBC(key, raw.Bytes())
+	return cryptoutil.EncryptDESCBC(key, raw.Bytes())
 }

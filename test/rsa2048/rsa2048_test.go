@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"testing"
 
+	crypto2 "security-project/common/crypto"
 	"security-project/common/krb"
 )
 
@@ -23,9 +24,9 @@ func TestRSA2048Interop(t *testing.T) {
 		if err != nil {
 			t.Fatalf("rsa.SignPKCS1v15: %v", err)
 		}
-		pub := &krb.RSAKey{N: new(big.Int).Set(priv.N), E: big.NewInt(int64(priv.E))}
-		if code := krb.VerifySHA256(message, toSig256(sig), pub); code != krb.KRBOK {
-			t.Fatalf("our verifier rejected stdlib signature, code=%d", code)
+		pub := &crypto2.RSAKey{N: new(big.Int).Set(priv.N), E: big.NewInt(int64(priv.E))}
+		if err := krb.VerifySHA256(message, toSig256(sig), pub); err != nil {
+			t.Fatalf("our verifier rejected stdlib signature: %v", err)
 		}
 	})
 
@@ -35,18 +36,18 @@ func TestRSA2048Interop(t *testing.T) {
 			t.Fatalf("rsa.GenerateKey: %v", err)
 		}
 		message := []byte("Verify_Target_Signature_Logic")
-		pub := &krb.RSAKey{N: new(big.Int).Set(priv.N), E: big.NewInt(int64(priv.E))}
-		privK := &krb.RSAKey{N: new(big.Int).Set(priv.N), E: big.NewInt(int64(priv.E)), D: new(big.Int).Set(priv.D)}
-		sig, code := krb.SignSHA256(message, privK)
-		if code != krb.KRBOK {
-			t.Fatalf("our signer failed, code=%d", code)
+		pub := &crypto2.RSAKey{N: new(big.Int).Set(priv.N), E: big.NewInt(int64(priv.E))}
+		privK := &crypto2.RSAKey{N: new(big.Int).Set(priv.N), E: big.NewInt(int64(priv.E)), D: new(big.Int).Set(priv.D)}
+		sig, err := krb.SignSHA256(message, privK)
+		if err != nil {
+			t.Fatalf("our signer failed: %v", err)
 		}
 		hashed := sha256.Sum256(message)
 		if err := rsa.VerifyPKCS1v15(&priv.PublicKey, crypto.SHA256, hashed[:], sig[:]); err != nil {
 			t.Fatalf("stdlib verifier rejected our signature: %v", err)
 		}
-		if code := krb.VerifySHA256(message, sig, pub); code != krb.KRBOK {
-			t.Fatalf("our verifier rejected our signature, code=%d", code)
+		if err := krb.VerifySHA256(message, sig, pub); err != nil {
+			t.Fatalf("our verifier rejected our signature: %v", err)
 		}
 	})
 }

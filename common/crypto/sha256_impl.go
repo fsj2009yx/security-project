@@ -1,4 +1,4 @@
-package krb
+package crypto
 
 type SHA256Ctx struct {
 	h         [8]uint32

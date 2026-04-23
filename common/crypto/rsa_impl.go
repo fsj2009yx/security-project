@@ -1,4 +1,4 @@
-package krb
+package crypto
 
 import (
 	"bytes"
@@ -138,7 +138,7 @@ func rsaVerifyDigest(hash []byte, sig []byte, pub *RSAKey) int32 {
 	return KRBOK
 }
 
-func rsaVerifySignature(seq uint32, cipherData []byte, sig [256]byte, pub *RSAKey) int32 {
+func RsaVerifySignature(seq uint32, cipherData []byte, sig [256]byte, pub *RSAKey) int32 {
 	buf := make([]byte, 4+len(cipherData))
 	binary.BigEndian.PutUint32(buf[:4], seq)
 	copy(buf[4:], cipherData)

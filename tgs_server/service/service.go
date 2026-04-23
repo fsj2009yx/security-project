@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	cryptoutil "security-project/common/crypto"
 	"security-project/common/krb"
 	"security-project/tgs_server/config"
 )
@@ -110,95 +111,104 @@ func (s *Service) handleConnection(conn net.Conn) {
 	}()
 	peerADc := krb.PeerIP(conn)
 	_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
-	h, payload, code := krb.ReadPacket(conn, 64*1024)
-	if code != krb.KRBOK {
+	h, payload, err := krb.ReadPacket(conn, 64*1024)
+	if err != nil {
+		code := krb.CodeFromError(err)
 		if code != krb.ErrSocketRecv {
 			_ = s.writeError(conn, s.nextServerSeq(), code)
 		}
 		return
 	}
-	if code := s.replay.Check(h.Timestamp, h.SeqNum); code != krb.KRBOK {
-		_ = s.writeError(conn, s.nextServerSeq(), code)
+	if err := s.replay.Check(h.Timestamp, h.SeqNum); err != nil {
+		_ = s.writeError(conn, s.nextServerSeq(), krb.CodeFromError(err))
 		return
 	}
-	if code := krb.CheckHeaderType(h.MsgType, krb.MsgTGSReq); code != krb.KRBOK {
-		_ = s.writeError(conn, s.nextServerSeq(), code)
+	if err := krb.CheckHeaderType(h.MsgType, krb.MsgTGSReq); err != nil {
+		_ = s.writeError(conn, s.nextServerSeq(), krb.CodeFromError(err))
 		return
 	}
-	respType, respPayload, respCode := s.handleTGSReq(h, payload, peerADc)
-	if respCode != krb.KRBOK {
-		_ = s.writeError(conn, s.nextServerSeq(), respCode)
+	respType, respPayload, respErr := s.handleTGSReq(h, payload, peerADc)
+	if respErr != nil {
+		_ = s.writeError(conn, s.nextServerSeq(), krb.CodeFromError(respErr))
 		return
 	}
 	_ = krb.WritePacket(conn, respType, s.nextServerSeq(), uint32(time.Now().Unix()), respPayload)
 }
 
-func (s *Service) handleTGSReq(h krb.KerHeader, payload []byte, peerADc uint32) (uint8, []byte, int32) {
-	req, code := krb.ParseTGSReqPayload(payload)
-	if code != krb.KRBOK {
-		return krb.MsgErr, krb.BuildErrorPayload(code), code
+func (s *Service) handleTGSReq(h krb.ProtocolHeader, payload []byte, peerADc uint32) (uint8, []byte, error) {
+	req, err := krb.ParseTGSReqPayload(payload)
+	if err != nil {
+		return krb.MsgErr, krb.BuildErrorPayload(krb.CodeFromError(err)), err
 	}
-	ticket, code := krb.DecodeTicketTGS(req.TicketTGS, s.state.Ktgs)
-	if code != krb.KRBOK {
-		return krb.MsgErr, krb.BuildErrorPayload(code), code
+	ticket, err := krb.DecodeTicketTGS(req.TicketTGS, s.state.Ktgs)
+	if err != nil {
+		return krb.MsgErr, krb.BuildErrorPayload(krb.CodeFromError(err)), err
 	}
 	if ticket.IDTGS.Len > 0 && string(ticket.IDTGS.Data) != s.state.IDTGS {
-		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrTicketInvalid), krb.ErrTicketInvalid
+		err := krb.ErrorFromCode(krb.ErrTicketInvalid)
+		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrTicketInvalid), err
 	}
 	expire := ticket.TS2 + ticket.Lifetime
 	if uint32(time.Now().Unix()) > expire {
-		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrTicketExpired), krb.ErrTicketExpired
+		err := krb.ErrorFromCode(krb.ErrTicketExpired)
+		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrTicketExpired), err
 	}
-	auth, code := krb.DecodeAuthenticatorCTGS(req.AuthCipher, ticket.KeyCTGS)
-	if code != krb.KRBOK {
-		return krb.MsgErr, krb.BuildErrorPayload(code), code
+	auth, err := krb.DecodeAuthenticatorCTGS(req.AuthCipher, ticket.KeyCTGS)
+	if err != nil {
+		return krb.MsgErr, krb.BuildErrorPayload(krb.CodeFromError(err)), err
 	}
 	if string(auth.IDClient.Data) != string(ticket.IDClient.Data) {
-		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrAuthMismatch), krb.ErrAuthMismatch
+		err := krb.ErrorFromCode(krb.ErrAuthMismatch)
+		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrAuthMismatch), err
 	}
 	if auth.ADc != 0 && ticket.ADc != 0 && auth.ADc != ticket.ADc && auth.ADc != peerADc {
-		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrADMismatch), krb.ErrADMismatch
+		err := krb.ErrorFromCode(krb.ErrADMismatch)
+		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrADMismatch), err
 	}
 	secret, ok := s.state.Services[string(req.IDV.Data)]
 	if !ok {
-		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrTicketInvalid), krb.ErrTicketInvalid
+		err := krb.ErrorFromCode(krb.ErrTicketInvalid)
+		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrTicketInvalid), err
 	}
-	keyCV, code := rand8()
-	if code != krb.KRBOK {
-		return krb.MsgErr, krb.BuildErrorPayload(code), code
+	keyCV, err := rand8()
+	if err != nil {
+		err := krb.ErrorFromCode(krb.ErrKeyDerive)
+		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrKeyDerive), err
 	}
 	ts4 := uint32(time.Now().Unix())
-	ticketVPlain, code := krb.BuildTicketVPlain(string(ticket.IDClient.Data), ticket.ADc, string(req.IDV.Data), keyCV, ts4, s.Config.TicketLifetimeSec)
-	if code != krb.KRBOK {
-		return krb.MsgErr, krb.BuildErrorPayload(code), code
-	}
-	ticketVCipher, err := krb.EncryptDESCBC(secret.Kv, ticketVPlain)
+	ticketVPlain, err := krb.BuildTicketVPlain(string(ticket.IDClient.Data), ticket.ADc, string(req.IDV.Data), keyCV, ts4, s.Config.TicketLifetimeSec)
 	if err != nil {
-		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrDESPadding), krb.ErrDESPadding
+		return krb.MsgErr, krb.BuildErrorPayload(krb.CodeFromError(err)), err
 	}
-	innerPlain, code := krb.BuildTGSRepPlain(keyCV, string(req.IDV.Data), ts4, s.Config.TicketLifetimeSec, ticketVCipher)
-	if code != krb.KRBOK {
-		return krb.MsgErr, krb.BuildErrorPayload(code), code
-	}
-	encPart, err := krb.EncryptDESCBC(ticket.KeyCTGS, innerPlain)
+	ticketVCipher, err := cryptoutil.EncryptDESCBC(secret.Kv, ticketVPlain)
 	if err != nil {
-		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrDESPadding), krb.ErrDESPadding
+		err := krb.ErrorFromCode(krb.ErrDESPadding)
+		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrDESPadding), err
 	}
-	resp, code := krb.BuildASRepPayload(encPart)
-	if code != krb.KRBOK {
-		return krb.MsgErr, krb.BuildErrorPayload(code), code
+	innerPlain, err := krb.BuildTGSRepPlain(keyCV, string(req.IDV.Data), ts4, s.Config.TicketLifetimeSec, ticketVCipher)
+	if err != nil {
+		return krb.MsgErr, krb.BuildErrorPayload(krb.CodeFromError(err)), err
 	}
-	return krb.MsgTGSRep, resp, krb.KRBOK
+	encPart, err := cryptoutil.EncryptDESCBC(ticket.KeyCTGS, innerPlain)
+	if err != nil {
+		err := krb.ErrorFromCode(krb.ErrDESPadding)
+		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrDESPadding), err
+	}
+	resp, err := krb.BuildASRepPayload(encPart)
+	if err != nil {
+		return krb.MsgErr, krb.BuildErrorPayload(krb.CodeFromError(err)), err
+	}
+	return krb.MsgTGSRep, resp, nil
 }
 
 func (s *Service) writeError(conn net.Conn, seq uint32, code int32) error {
 	return krb.WritePacket(conn, krb.MsgErr, seq, uint32(time.Now().Unix()), krb.BuildErrorPayload(code))
 }
 
-func rand8() ([8]byte, int32) {
+func rand8() ([8]byte, error) {
 	var out [8]byte
 	if _, err := rand.Read(out[:]); err != nil {
-		return out, krb.ErrKeyDerive
+		return out, err
 	}
-	return out, krb.KRBOK
+	return out, nil
 }

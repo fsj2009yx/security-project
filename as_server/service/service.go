@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"security-project/as_server/config"
+	cryptoutil "security-project/common/crypto"
 	"security-project/common/krb"
 )
 
@@ -165,24 +166,25 @@ func (s *Service) handleConnection(conn net.Conn) {
 	peerADc := krb.PeerIP(conn)
 	for {
 		_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
-		h, payload, code := krb.ReadPacket(conn, 64*1024)
-		if code != krb.KRBOK {
+		h, payload, err := krb.ReadPacket(conn, 64*1024)
+		if err != nil {
+			code := krb.CodeFromError(err)
 			if code != krb.ErrSocketRecv {
 				_ = s.writeError(conn, s.nextServerSeq(), code)
 			}
 			return
 		}
-		if code := s.replay.Check(h.Timestamp, h.SeqNum); code != krb.KRBOK {
-			_ = s.writeError(conn, s.nextServerSeq(), code)
+		if err := s.replay.Check(h.Timestamp, h.SeqNum); err != nil {
+			_ = s.writeError(conn, s.nextServerSeq(), krb.CodeFromError(err))
 			return
 		}
-		if code := krb.CheckHeaderType(h.MsgType, krb.MsgASReq); code != krb.KRBOK {
-			_ = s.writeError(conn, s.nextServerSeq(), code)
+		if err := krb.CheckHeaderType(h.MsgType, krb.MsgASReq); err != nil {
+			_ = s.writeError(conn, s.nextServerSeq(), krb.CodeFromError(err))
 			return
 		}
-		respType, respPayload, respCode := s.handleASReq(h, payload, peerADc)
-		if respCode != krb.KRBOK {
-			_ = s.writeError(conn, s.nextServerSeq(), respCode)
+		respType, respPayload, respErr := s.handleASReq(h, payload, peerADc)
+		if respErr != nil {
+			_ = s.writeError(conn, s.nextServerSeq(), krb.CodeFromError(respErr))
 			return
 		}
 		if err := krb.WritePacket(conn, respType, s.nextServerSeq(), uint32(time.Now().Unix()), respPayload); err != nil {
@@ -192,56 +194,62 @@ func (s *Service) handleConnection(conn net.Conn) {
 	}
 }
 
-func (s *Service) handleASReq(h krb.KerHeader, payload []byte, peerADc uint32) (uint8, []byte, int32) {
-	req, code := krb.ParseASReqPayload(payload)
-	if code != krb.KRBOK {
-		return krb.MsgErr, krb.BuildErrorPayload(code), code
+func (s *Service) handleASReq(h krb.ProtocolHeader, payload []byte, peerADc uint32) (uint8, []byte, error) {
+	req, err := krb.ParseASReqPayload(payload)
+	if err != nil {
+		return krb.MsgErr, krb.BuildErrorPayload(krb.CodeFromError(err)), err
 	}
 	secret, ok := s.state.Clients[string(req.IDClient.Data)]
 	if !ok {
-		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrClientNotFound), krb.ErrClientNotFound
+		err := krb.ErrorFromCode(krb.ErrClientNotFound)
+		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrClientNotFound), err
 	}
 	secret.ADc = peerADc
-	keyCTGS, code := rand8()
-	if code != krb.KRBOK {
-		return krb.MsgErr, krb.BuildErrorPayload(code), code
+	keyCTGS, err := rand8()
+	if err != nil {
+		err := krb.ErrorFromCode(krb.ErrKeyDerive)
+		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrKeyDerive), err
 	}
 	ts2 := uint32(time.Now().Unix())
 	idTGS := string(req.IDTGS.Data)
 	if idTGS == "" {
 		idTGS = s.state.IDTGS
 	}
-	ticketPlain, code := krb.BuildTicketTGSPlain(secret, idTGS, keyCTGS, ts2, s.Config.TicketLifetimeSec)
-	if code != krb.KRBOK {
-		return krb.MsgErr, krb.BuildErrorPayload(code), code
-	}
-	ticketCipher, err := krb.EncryptDESCBC(s.state.Ktgs, ticketPlain)
+	ticketPlain, err := krb.BuildTicketTGSPlain(secret, idTGS, keyCTGS, ts2, s.Config.TicketLifetimeSec)
 	if err != nil {
-		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrDESPadding), krb.ErrDESPadding
+		return krb.MsgErr, krb.BuildErrorPayload(krb.CodeFromError(err)), err
 	}
-	innerPlain, code := krb.BuildASRepPlain(keyCTGS, idTGS, ts2, s.Config.TicketLifetimeSec, ticketCipher)
-	if code != krb.KRBOK {
-		return krb.MsgErr, krb.BuildErrorPayload(code), code
-	}
-	encPart, err := krb.EncryptDESCBC(secret.Kc, innerPlain)
+	ticketCipher, err := cryptoutil.EncryptDESCBC(s.state.Ktgs, ticketPlain)
 	if err != nil {
-		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrDESPadding), krb.ErrDESPadding
+		err := krb.ErrorFromCode(krb.ErrDESPadding)
+		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrDESPadding), err
 	}
-	resp, code := krb.BuildASRepPayload(encPart)
-	if code != krb.KRBOK {
-		return krb.MsgErr, krb.BuildErrorPayload(code), code
+	innerPlain, err := krb.BuildASRepPlain(keyCTGS, idTGS, ts2, s.Config.TicketLifetimeSec, ticketCipher)
+	if err != nil {
+		return krb.MsgErr, krb.BuildErrorPayload(krb.CodeFromError(err)), err
 	}
-	return krb.MsgASRep, resp, krb.KRBOK
+	encPart, err := cryptoutil.EncryptDESCBC(secret.Kc, innerPlain)
+	if err != nil {
+		err := krb.ErrorFromCode(krb.ErrDESPadding)
+		return krb.MsgErr, krb.BuildErrorPayload(krb.ErrDESPadding), err
+	}
+	resp, err := krb.BuildASRepPayload(encPart)
+	if err != nil {
+		return krb.MsgErr, krb.BuildErrorPayload(krb.CodeFromError(err)), err
+	}
+	return krb.MsgASRep, resp, nil
 }
 
 func (s *Service) writeError(conn net.Conn, seq uint32, code int32) error {
 	return krb.WritePacket(conn, krb.MsgErr, seq, uint32(time.Now().Unix()), krb.BuildErrorPayload(code))
 }
 
-func rand8() ([8]byte, int32) {
+// rand8 生成一个随机的 8 字节数组，返回生成的字节数组和一个状态码。
+// 如果生成过程中发生错误，返回一个全零的字节数组和一个错误状态码。
+func rand8() ([8]byte, error) {
 	var out [8]byte
 	if _, err := rand.Read(out[:]); err != nil {
-		return out, krb.ErrKeyDerive
+		return out, err
 	}
-	return out, krb.KRBOK
+	return out, nil
 }

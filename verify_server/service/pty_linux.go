@@ -1,5 +1,4 @@
 //go:build !windows
-// +build !windows
 
 package service
 
@@ -10,11 +9,9 @@ import (
 	"syscall"
 
 	"github.com/creack/pty"
-
-	"security-project/common/krb"
 )
 
-func startPTYSession(term string, cols, rows uint16) (*LocalPTYSession, int32) {
+func startPTYSession(term string, cols, rows uint16) (*LocalPTYSession, error) {
 	shell := "/bin/sh"
 	if term == "" {
 		term = "xterm-256color"
@@ -24,11 +21,13 @@ func startPTYSession(term string, cols, rows uint16) (*LocalPTYSession, int32) {
 	ws := &pty.Winsize{Cols: cols, Rows: rows}
 	f, err := pty.StartWithSize(cmd, ws)
 	if err != nil {
-		return nil, krb.ErrSessionNotFound
+		return nil, err
 	}
-	return &LocalPTYSession{PTY: f, File: f, Cmd: cmd}, krb.KRBOK
+	return &LocalPTYSession{PTY: f, File: f, Cmd: cmd}, nil
 }
 
+// Resize 用来调整PTY窗口大小的函数。它接受列数和行数作为参数，
+// 并使用pty库的Setsize函数来设置PTY的窗口大小。如果PTY会话尚未启动或文件句柄无效，它将返回一个错误。
 func (p *LocalPTYSession) Resize(cols, rows uint16) error {
 	if p == nil {
 		return fmt.Errorf("pty not started")
@@ -41,6 +40,8 @@ func (p *LocalPTYSession) Resize(cols, rows uint16) error {
 	return pty.Setsize(p.File, &pty.Winsize{Cols: cols, Rows: rows})
 }
 
+// Signal 用于向PTY会话发送信号的函数。它接受一个uint8类型的sig参数，表示要发送的信号类型。
+// 根据sig的值，它将转换为相应的syscall.Signal类型，并使用Cmd.Process.Signal方法将信号发送到PTY会话的进程。
 func (p *LocalPTYSession) Signal(sig uint8) error {
 	if p == nil {
 		return fmt.Errorf("pty process not started")
@@ -64,6 +65,7 @@ func (p *LocalPTYSession) Signal(sig uint8) error {
 	return p.Cmd.Process.Signal(s)
 }
 
+// Close 用于关闭PTY会话的函数。它首先检查PTY会话是否存在，如果不存在则直接返回nil。
 func (p *LocalPTYSession) Close() error {
 	if p == nil {
 		return nil
@@ -83,6 +85,8 @@ func (p *LocalPTYSession) Close() error {
 	return err
 }
 
+// ReadAll 用于从PTY会话中读取数据的函数。它接受一个chan<- []byte类型的dst参数，用于将读取到的数据发送到外部，
+// 以及一个<-chan struct{}类型的stop参数，用于接收停止信号。
 func (p *LocalPTYSession) ReadAll(dst chan<- []byte, stop <-chan struct{}) {
 	if p == nil || p.PTY == nil {
 		close(dst)

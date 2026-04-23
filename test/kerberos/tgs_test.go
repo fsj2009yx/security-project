@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"testing"
 
+	cryptoutil "security-project/common/crypto"
 	"security-project/common/krb"
 )
 
@@ -22,11 +23,11 @@ func TestKerberosTGSMessages(t *testing.T) {
 	keyCTGS := [8]byte{0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48}
 	keyCV := [8]byte{0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58}
 
-	ticketPlain, code := krb.BuildTicketTGSPlain(krb.ASClientSecret{IDClient: client, ADc: adc}, idTGS, keyCTGS, ts2, lifetime)
-	if code != krb.KRBOK {
-		t.Fatalf("BuildTicketTGSPlain failed: %d", code)
+	ticketPlain, err := krb.BuildTicketTGSPlain(krb.ASClientSecret{IDClient: client, ADc: adc}, idTGS, keyCTGS, ts2, lifetime)
+	if err != nil {
+		t.Fatalf("BuildTicketTGSPlain failed: %v", err)
 	}
-	ticketCipher, err := krb.EncryptDESCBC(ktgs, ticketPlain)
+	ticketCipher, err := cryptoutil.EncryptDESCBC(ktgs, ticketPlain)
 	if err != nil {
 		t.Fatalf("EncryptDESCBC(ticket_tgs) failed: %v", err)
 	}
@@ -35,21 +36,21 @@ func TestKerberosTGSMessages(t *testing.T) {
 		t.Fatalf("buildAuthenticatorCTGSCipher failed: %v", err)
 	}
 	reqRaw := buildTGSReqPayload(idV, ticketCipher, authCipher)
-	req, code := krb.ParseTGSReqPayload(reqRaw)
-	if code != krb.KRBOK {
-		t.Fatalf("ParseTGSReqPayload failed: %d", code)
+	req, err := krb.ParseTGSReqPayload(reqRaw)
+	if err != nil {
+		t.Fatalf("ParseTGSReqPayload failed: %v", err)
 	}
 	if string(req.IDV.Data) != idV || !bytes.Equal(req.TicketTGS, ticketCipher) || !bytes.Equal(req.AuthCipher, authCipher) {
 		t.Fatalf("TGS_REQ mismatch")
 	}
 
-	ticketDecoded, code := krb.DecodeTicketTGS(req.TicketTGS, ktgs)
-	if code != krb.KRBOK {
-		t.Fatalf("DecodeTicketTGS failed: %d", code)
+	ticketDecoded, err := krb.DecodeTicketTGS(req.TicketTGS, ktgs)
+	if err != nil {
+		t.Fatalf("DecodeTicketTGS failed: %v", err)
 	}
-	authDecoded, code := krb.DecodeAuthenticatorCTGS(req.AuthCipher, ticketDecoded.KeyCTGS)
-	if code != krb.KRBOK {
-		t.Fatalf("DecodeAuthenticatorCTGS failed: %d", code)
+	authDecoded, err := krb.DecodeAuthenticatorCTGS(req.AuthCipher, ticketDecoded.KeyCTGS)
+	if err != nil {
+		t.Fatalf("DecodeAuthenticatorCTGS failed: %v", err)
 	}
 	if string(ticketDecoded.IDClient.Data) != client || ticketDecoded.ADc != adc || string(ticketDecoded.IDTGS.Data) != idTGS || ticketDecoded.TS2 != ts2 || ticketDecoded.Lifetime != lifetime {
 		t.Fatalf("ticket_tgs mismatch")
@@ -58,40 +59,40 @@ func TestKerberosTGSMessages(t *testing.T) {
 		t.Fatalf("authenticator_ctgs mismatch")
 	}
 
-	ticketVPlain, code := krb.BuildTicketVPlain(client, adc, idV, keyCV, ts4, lifetime)
-	if code != krb.KRBOK {
-		t.Fatalf("BuildTicketVPlain failed: %d", code)
+	ticketVPlain, err := krb.BuildTicketVPlain(client, adc, idV, keyCV, ts4, lifetime)
+	if err != nil {
+		t.Fatalf("BuildTicketVPlain failed: %v", err)
 	}
-	ticketVCipher, err := krb.EncryptDESCBC(kv, ticketVPlain)
+	ticketVCipher, err := cryptoutil.EncryptDESCBC(kv, ticketVPlain)
 	if err != nil {
 		t.Fatalf("EncryptDESCBC(ticket_v) failed: %v", err)
 	}
-	innerPlain, code := krb.BuildTGSRepPlain(keyCV, idV, ts4, lifetime, ticketVCipher)
-	if code != krb.KRBOK {
-		t.Fatalf("BuildTGSRepPlain failed: %d", code)
+	innerPlain, err := krb.BuildTGSRepPlain(keyCV, idV, ts4, lifetime, ticketVCipher)
+	if err != nil {
+		t.Fatalf("BuildTGSRepPlain failed: %v", err)
 	}
-	encPart, err := krb.EncryptDESCBC(keyCTGS, innerPlain)
+	encPart, err := cryptoutil.EncryptDESCBC(keyCTGS, innerPlain)
 	if err != nil {
 		t.Fatalf("EncryptDESCBC(tgs rep) failed: %v", err)
 	}
-	wire, code := krb.BuildASRepPayload(encPart)
-	if code != krb.KRBOK {
-		t.Fatalf("BuildASRepPayload failed: %d", code)
+	wire, err := krb.BuildASRepPayload(encPart)
+	if err != nil {
+		t.Fatalf("BuildASRepPayload failed: %v", err)
 	}
-	outer, code := krb.ParseASRepPayload(wire)
-	if code != krb.KRBOK {
-		t.Fatalf("ParseASRepPayload failed: %d", code)
+	outer, err := krb.ParseASRepPayload(wire)
+	if err != nil {
+		t.Fatalf("ParseASRepPayload failed: %v", err)
 	}
 	if outer.CipherLen != uint32(len(encPart)) || !bytes.Equal(outer.EncPart, encPart) {
 		t.Fatalf("TGS_REP outer mismatch")
 	}
-	plain, err := krb.DecryptDESCBC(keyCTGS, outer.EncPart)
+	plain, err := cryptoutil.DecryptDESCBC(keyCTGS, outer.EncPart)
 	if err != nil {
 		t.Fatalf("DecryptDESCBC(tgs rep) failed: %v", err)
 	}
-	gotKey, gotIDV, gotTS4, gotLifetime, gotTicket, code := decodeTGSRepPlain(plain)
-	if code != krb.KRBOK {
-		t.Fatalf("decodeTGSRepPlain failed: %d", code)
+	gotKey, gotIDV, gotTS4, gotLifetime, gotTicket, err := decodeTGSRepPlain(plain)
+	if err != nil {
+		t.Fatalf("decodeTGSRepPlain failed: %v", err)
 	}
 	if gotKey != keyCV || gotIDV != idV || gotTS4 != ts4 || gotLifetime != lifetime {
 		t.Fatalf("TGS_REP plain mismatch")
@@ -99,13 +100,13 @@ func TestKerberosTGSMessages(t *testing.T) {
 	if !bytes.Equal(gotTicket, ticketVCipher) {
 		t.Fatalf("ticket_v cipher mismatch")
 	}
-	ticketVDecoded, err := krb.DecryptDESCBC(kv, gotTicket)
+	ticketVDecoded, err := cryptoutil.DecryptDESCBC(kv, gotTicket)
 	if err != nil {
 		t.Fatalf("DecryptDESCBC(ticket_v) failed: %v", err)
 	}
-	client2, adc2, idV2, ts42, lifetime2, code := decodeTicketVPlain(ticketVDecoded)
-	if code != krb.KRBOK {
-		t.Fatalf("decodeTicketVPlain failed: %d", code)
+	client2, adc2, idV2, ts42, lifetime2, err := decodeTicketVPlain(ticketVDecoded)
+	if err != nil {
+		t.Fatalf("decodeTicketVPlain failed: %v", err)
 	}
 	if client2 != client || adc2 != adc || idV2 != idV || ts42 != ts4 || lifetime2 != lifetime {
 		t.Fatalf("ticket_v mismatch")
@@ -133,54 +134,54 @@ func buildAuthenticatorCTGSCipher(key [8]byte, client string, adc, ts3 uint32) (
 	raw.Write(tmp4[:])
 	binary.BigEndian.PutUint32(tmp4[:], ts3)
 	raw.Write(tmp4[:])
-	return krb.EncryptDESCBC(key, raw.Bytes())
+	return cryptoutil.EncryptDESCBC(key, raw.Bytes())
 }
 
-func decodeTGSRepPlain(raw []byte) ([8]byte, string, uint32, uint32, []byte, int32) {
+func decodeTGSRepPlain(raw []byte) ([8]byte, string, uint32, uint32, []byte, error) {
 	var key [8]byte
 	if len(raw) < 8 {
-		return key, "", 0, 0, nil, krb.ErrTicketInvalid
+		return key, "", 0, 0, nil, krb.ErrorFromCode(krb.ErrTicketInvalid)
 	}
 	copy(key[:], raw[:8])
-	idV, off, code := krb.DecodeKString(raw[8:])
-	if code != krb.KRBOK {
-		return key, "", 0, 0, nil, code
+	idV, off, err := krb.DecodeKString(raw[8:])
+	if err != nil {
+		return key, "", 0, 0, nil, err
 	}
 	base := 8 + off
 	if len(raw) < base+12 {
-		return key, "", 0, 0, nil, krb.ErrTicketInvalid
+		return key, "", 0, 0, nil, krb.ErrorFromCode(krb.ErrTicketInvalid)
 	}
 	ts4 := binary.BigEndian.Uint32(raw[base : base+4])
 	lifetime := binary.BigEndian.Uint32(raw[base+4 : base+8])
 	ticketLen := binary.BigEndian.Uint32(raw[base+8 : base+12])
 	if len(raw) < base+12+int(ticketLen) {
-		return key, "", 0, 0, nil, krb.ErrTicketInvalid
+		return key, "", 0, 0, nil, krb.ErrorFromCode(krb.ErrTicketInvalid)
 	}
-	return key, string(idV.Data), ts4, lifetime, append([]byte(nil), raw[base+12:base+12+int(ticketLen)]...), krb.KRBOK
+	return key, string(idV.Data), ts4, lifetime, append([]byte(nil), raw[base+12:base+12+int(ticketLen)]...), nil
 }
 
-func decodeTicketVPlain(raw []byte) (string, uint32, string, uint32, uint32, int32) {
+func decodeTicketVPlain(raw []byte) (string, uint32, string, uint32, uint32, error) {
 	if len(raw) < 8 {
-		return "", 0, "", 0, 0, krb.ErrTicketInvalid
+		return "", 0, "", 0, 0, krb.ErrorFromCode(krb.ErrTicketInvalid)
 	}
-	idClient, off, code := krb.DecodeKString(raw[8:])
-	if code != krb.KRBOK {
-		return "", 0, "", 0, 0, code
+	idClient, off, err := krb.DecodeKString(raw[8:])
+	if err != nil {
+		return "", 0, "", 0, 0, err
 	}
 	base := 8 + off
-	if len(raw) < base+4 {
-		return "", 0, "", 0, 0, krb.ErrTicketInvalid
+	if len(raw) < base+12 {
+		return "", 0, "", 0, 0, krb.ErrorFromCode(krb.ErrTicketInvalid)
 	}
 	adc := binary.BigEndian.Uint32(raw[base : base+4])
-	idV, off2, code := krb.DecodeKString(raw[base+4:])
-	if code != krb.KRBOK {
-		return "", 0, "", 0, 0, code
+	idV, off2, err := krb.DecodeKString(raw[base+4:])
+	if err != nil {
+		return "", 0, "", 0, 0, err
 	}
 	base = base + 4 + off2
 	if len(raw) < base+8 {
-		return "", 0, "", 0, 0, krb.ErrTicketInvalid
+		return "", 0, "", 0, 0, krb.ErrorFromCode(krb.ErrTicketInvalid)
 	}
 	ts4 := binary.BigEndian.Uint32(raw[base : base+4])
 	lifetime := binary.BigEndian.Uint32(raw[base+4 : base+8])
-	return string(idClient.Data), adc, string(idV.Data), ts4, lifetime, krb.KRBOK
+	return string(idClient.Data), adc, string(idV.Data), ts4, lifetime, nil
 }

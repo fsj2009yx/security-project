@@ -8,31 +8,29 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
-
-	"security-project/common/krb"
 )
 
-func startPTYSession(term string, cols, rows uint16) (*LocalPTYSession, int32) {
+func startPTYSession(term string, cols, rows uint16) (*LocalPTYSession, error) {
 	cmd := exec.Command("cmd.exe")
 	cmd.Env = append(os.Environ(), "TERM="+term)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, krb.ErrSessionNotFound
+		return nil, err
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, krb.ErrSessionNotFound
+		return nil, err
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return nil, krb.ErrSessionNotFound
+		return nil, err
 	}
 	_ = stdin
 	_ = stderr
 	if err := cmd.Start(); err != nil {
-		return nil, krb.ErrSessionNotFound
+		return nil, err
 	}
-	return &LocalPTYSession{PTY: &windowsPTY{r: stdout, w: stdin}, Cmd: cmd}, krb.KRBOK
+	return &LocalPTYSession{PTY: &windowsPTY{r: stdout, w: stdin}, Cmd: cmd}, nil
 }
 
 type windowsPTY struct {
