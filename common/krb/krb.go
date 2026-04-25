@@ -138,6 +138,7 @@ func EncodeKStringStruct(ks KString) []byte {
 	return out
 }
 
+// PackHeader 构建一个协议头的字节切片，包含了消息类型、序列号、时间戳和负载长度等信息。返回构建好的字节切片。
 func PackHeader(msgType uint8, seqNum, timestamp uint32, payloadLen uint32) []byte {
 	out := make([]byte, 20)
 	binary.BigEndian.PutUint16(out[0:2], MagicNumber)
@@ -150,6 +151,7 @@ func PackHeader(msgType uint8, seqNum, timestamp uint32, payloadLen uint32) []by
 	return out
 }
 
+// UnpackHeader 从原始字节切片中解析出一个协议头结构体，校验魔数和版本号的正确性，并返回解析出的协议头和错误码。
 func UnpackHeader(raw []byte) (ProtocolHeader, error) {
 	if len(raw) < 20 {
 		return ProtocolHeader{}, errorFromCode(ErrSocketRecv)
@@ -532,6 +534,7 @@ func BuildAPRepPayload(ts5 uint32, keyCV [8]byte) ([]byte, error) {
 	return BuildASRepPayload(cipherData)
 }
 
+// ParseAPPReqPayload 解析AP-REQ消息的负载，返回一个APPReqPayload结构体和错误信息
 func ParseAPPReqPayload(raw []byte) (APPReqPayload, error) {
 	c := NewCursor(raw)
 	idClient, err := c.ReadKString()
@@ -560,6 +563,7 @@ func ParseAPPReqPayload(raw []byte) (APPReqPayload, error) {
 	}, nil
 }
 
+// DecryptAPPReqPlain 解密AP-REQ消息中的密文数据，返回一个APPReqPlain结构体和错误信息
 func DecryptAPPReqPlain(cipherBytes []byte, keyCV [8]byte) (APPReqPlain, error) {
 	plain, err := crypto.DecryptDESCBC(keyCV, cipherBytes)
 	if err != nil {
