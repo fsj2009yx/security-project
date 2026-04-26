@@ -20,6 +20,7 @@ func (c *Cursor) Remaining() int {
 	return len(c.data) - c.off
 }
 
+// ReadBytes 从 Cursor 中读取 n 个字节，并返回一个新的字节切片。它会更新 Cursor 的偏移量 off。
 func (c *Cursor) ReadBytes(n int) ([]byte, error) {
 	if c == nil || n < 0 || c.off+n > len(c.data) {
 		return nil, errorFromCode(ErrTicketInvalid)

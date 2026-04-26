@@ -7,6 +7,7 @@ type SHA256Ctx struct {
 	bufLen    uint32
 }
 
+// SHA-256 的初始哈希值和常量表
 var sha256InitState = [8]uint32{
 	0x6a09e667,
 	0xbb67ae85,
@@ -18,6 +19,7 @@ var sha256InitState = [8]uint32{
 	0x5be0cd19,
 }
 
+// SHA-256 的常量表
 var sha256K = [64]uint32{
 	0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
 	0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -148,10 +150,12 @@ func sha256Compress(h *[8]uint32, block []byte) {
 	h[7] += hh
 }
 
+// 右旋转32位整数v，旋转n位
 func rotr32(v uint32, n uint) uint32 {
 	return (v >> n) | (v << (32 - n))
 }
 
+// 将32位整数v以大端字节序写入dst
 func putUint32BE(dst []byte, v uint32) {
 	dst[0] = byte(v >> 24)
 	dst[1] = byte(v >> 16)
@@ -159,6 +163,7 @@ func putUint32BE(dst []byte, v uint32) {
 	dst[3] = byte(v)
 }
 
+// 将64位整数v以大端字节序写入dst
 func putUint64BE(dst []byte, v uint64) {
 	dst[0] = byte(v >> 56)
 	dst[1] = byte(v >> 48)

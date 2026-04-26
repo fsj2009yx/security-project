@@ -224,12 +224,12 @@ int32_t krb_antireplay_init(AntiReplay_Ctx* ctx);
 int32_t krb_antireplay_check(
     uint32_t        timestamp,  // [in] TIMESTAMP field in the packet header, already converted to host byte order
     uint32_t        seq_num,    // [in] SEQ_NUM field in the packet header, already converted to host byte order
-    AntiReplay_Ctx* ctx         // [in/out] anti-replay context; the function locks internally
+    AntiReplay_Ctx* ctx         // [in/out] anti-replay window bound to one sender/security context; the function locks internally
 );
 // Return value:KRB_OK(0) | ERR_REPLAY_TIMESTAMP(-1005) | ERR_REPLAY_SEQ(-1006)
 ```
 
-**Implementation details**: The timestamp check uses `abs((int32_t)(timestamp - (uint32_t)time(NULL))) > 5`. The sequence-number check scans the `window[1024]` array sequentially; linear scanning is acceptable for a small window. If a duplicate is found, reject it; otherwise, write the new SEQ into the window and evict the oldest record.
+**Implementation details**: The timestamp check uses `abs((int32_t)(timestamp - (uint32_t)time(NULL))) > 5`. The sequence-number check scans the `window[1024]` array sequentially; linear scanning is acceptable for a small window. If a duplicate is found, reject it; otherwise, write the new SEQ into the window and evict the oldest record. `ctx` must not be shared blindly across all clients in a service instance; it should be maintained per "sender identity + current security context", for example separately for `Client->AS`, `Client->TGS`, and `Client->V(APP)`.
 
 ---
 
@@ -267,7 +267,7 @@ struct Ker_Header {
     uint8_t  version;    // protocol version, currently fixed at 0x01
     uint8_t  msg_type;   // packet type, see the table below
     uint32_t total_len;  // Payload byte count, excluding the 20-byte header itself
-    uint32_t seq_num;    // sequence number maintained by the sender, monotonically increasing, used for anti-replay
+    uint32_t seq_num;    // sequence number maintained by the current sender, monotonically increasing within the same sender-side security session, used for anti-replay
     uint32_t timestamp;  // sender's current Unix timestamp, used for clock synchronization and anti-replay
     uint32_t addition;   // reserved field, currently filled with 0x00000000, for future version extensions
 };
@@ -1626,7 +1626,7 @@ struct Ker_Header {
     uint8_t  version;    // protocol version, currently fixed at 0x01
     uint8_t  msg_type;   // packet type, see the table below
     uint32_t total_len;  // Payload byte count, excluding the 20-byte header itself
-    uint32_t seq_num;    // sequence number maintained by the sender, monotonically increasing, used for anti-replay
+    uint32_t seq_num;    // sequence number maintained by the current sender, monotonically increasing within the same sender-side security session, used for anti-replay
     uint32_t timestamp;  // sender's current Unix timestamp, used for clock synchronization and anti-replay
     uint32_t addition;   // reserved field, currently filled with 0x00000000, for future version extensions
 };
@@ -2027,7 +2027,7 @@ To adapt to Go PTY, business messages are changed to a frame-driven session prot
 | +0                          | **Kstring**    | **ID_Client**   | **Routing identifier**: Server uses it to retrieve `Key_c_v` and `Pub_c`.  |
 | + (2 + Len_ID)              | **uint16**     | **Cipher_Len**  | Length of the following encrypted part (Cipher_Data).                   |
 | + (4 + Len_ID)              | **bytes**      | **Cipher_Data** | **Core ciphertext**: encrypted with `Key_c_v`, including IV + business plaintext. |
-| + (4 + Len_ID + Cipher_Len) | **bytes(256)** | **RSA_Sign_c**  | **Outer signature**: Client private key directly signs the ciphertext block.       |
+| + (4 + Len_ID + Cipher_Len) | **bytes(256)** | **RSA_Sign_c**  | **Outer signature**: Client private key signs `Seq_Num || Cipher_Data`.       |
 
 **Plaintext Structure After Decrypting Cipher_Data (PTY Control Frame)**
 
@@ -2054,7 +2054,7 @@ To adapt to Go PTY, business messages are changed to a frame-driven session prot
  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+             |
  |                                                               |
  |                  RSA_Signature_c (256 Bytes)                  |
- |           (directly signs the Cipher_Data ciphertext block above)              |
+|      (signs the protocol-header Seq_Num together with the Cipher_Data above)   |
  |                                                               |
  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
                                                    |
@@ -2126,7 +2126,7 @@ Use the **encrypt-then-sign** mode to prevent DoS attacks against RSA decryption
 | --------------- | -------------- | --------------- | ------------------------------------------------------------ |
 | +0              | **uint16**     | **Cipher_Len**  | Length of the following encrypted part (Cipher_Data).                          |
 | +2              | **bytes**      | **Cipher_Data** | **Core ciphertext**: encrypted with `Key_c_v`, containing IV + ciphertext.          |
-| +(2+Cipher_Len) | **bytes(256)** | **RSA_Sign_v**  | **Outer security credential**: V private-key signature over ciphertext `Cipher_Data`, used for anti-forgery verification before decryption. |
+| +(2+Cipher_Len) | **bytes(256)** | **RSA_Sign_v**  | **Outer security credential**: V private-key signature over `Seq_Num || Cipher_Data`, used for anti-forgery verification before decryption. |
 
 **Plaintext Structure After Decrypting Cipher_Data (PTY Event Frame)**
 
@@ -2150,7 +2150,7 @@ Use the **encrypt-then-sign** mode to prevent DoS attacks against RSA decryption
  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+             |
  |                                                               |
  |                  RSA_Signature_v (256 Bytes)                  |
- |           (directly signs the Cipher_Data ciphertext block above)              |
+|      (signs the protocol-header Seq_Num together with the Cipher_Data above)   |
  |                                                               |
  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
                                                    |
@@ -2178,9 +2178,9 @@ When each PTY event is generated, such as OPEN_OK/OUTPUT/EXIT/ERROR, the Server 
 
 2. **Message payload to be signed (M)**:
 
-   Hash the newly generated **ciphertext binary stream**.
+   Hash the protocol-header `Seq_Num` concatenated with the newly generated **ciphertext binary stream**.
 
-   $$M = \text{Cipher\_Data}$$
+   $$M = \text{Seq\_Num} \parallel \text{Cipher\_Data}$$
 
 3. **Signature calculation**:
 
@@ -2195,9 +2195,9 @@ After the Client receives **APP_REP**:
 
 1. **Packet decomposition and hashing**:
 
-   Extract `Cipher_Len` from the header, slice out `Cipher_Data`, and read the trailing 256-byte signature block.
+   Extract `Seq_Num` and `Cipher_Len` from the header, slice out `Cipher_Data`, and read the trailing 256-byte signature block.
 
-   Calculate the ciphertext hash: $M' = \text{Cipher\_Data}$
+   Calculate the message digest to be verified: $M' = \text{Seq\_Num} \parallel \text{Cipher\_Data}$
 
 2. **Decrypt signature (verify signature first)**:
 

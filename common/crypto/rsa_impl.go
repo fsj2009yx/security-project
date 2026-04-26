@@ -31,6 +31,7 @@ func (k *RSAKey) IsPrivate() bool {
 	return k != nil && k.N != nil && k.D != nil && k.E != nil
 }
 
+// rsaModExp 快速幂算法
 func rsaModExp(base, exp, mod *big.Int) *big.Int {
 	if base == nil || exp == nil || mod == nil || mod.Sign() <= 0 {
 		return nil
